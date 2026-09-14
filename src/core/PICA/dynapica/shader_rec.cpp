@@ -16,7 +16,19 @@ void ShaderJIT::prepare(PICAShader& shaderUnit) {
 	auto it = cache.find(hash);
 
 	if (it == cache.end()) { // Block has not been compiled yet
+#ifdef __ORBIS__
+		std::unique_ptr<ShaderEmitter> emitter;
+		try {
+			emitter = std::make_unique<ShaderEmitter>(accurateMul);
+		} catch (const Xbyak::Error&) {
+			// The executable arena is full. Every cached shader can be recompiled, so start over rather than abort.
+			cache.clear();
+			it = cache.end();
+			emitter = std::make_unique<ShaderEmitter>(accurateMul);
+		}
+#else
 		auto emitter = std::make_unique<ShaderEmitter>(accurateMul);
+#endif
 		emitter->compile(shaderUnit);
 		// Get pointer to callbacks
 		entrypointCallback = emitter->getInstructionCallback(shaderUnit.entrypoint);

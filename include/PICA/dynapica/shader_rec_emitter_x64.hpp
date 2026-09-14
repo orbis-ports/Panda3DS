@@ -11,6 +11,13 @@
 #include "xbyak/xbyak.h"
 #include "xbyak/xbyak_util.h"
 
+#ifdef __ORBIS__
+// The PlayStation 4 will not make malloc'd memory executable, which is what Xbyak's default allocator asks for.
+// Shaders are carved out of one executable arena instead; every emitter asks for the same size, so a free
+// list of equal blocks is the whole allocator.
+Xbyak::Allocator* orbisShaderCodeAllocator();
+#endif
+
 class ShaderEmitter : public Xbyak::CodeGenerator {
 	static constexpr size_t executableMemorySize = PICAShader::maxInstructionCount * 96;  // How much executable memory to alloc for each shader
 	// Allocate some extra space as padding for security purposes in the extremely unlikely occasion we manage to overflow the above size
@@ -132,7 +139,11 @@ class ShaderEmitter : public Xbyak::CodeGenerator {
 	PrologueCallback prologueCb = nullptr;
 
 	// Initialize our emitter with "allocSize" bytes of RWX memory
+#ifdef __ORBIS__
+	ShaderEmitter(bool useSafeMUL) : Xbyak::CodeGenerator(allocSize, nullptr, orbisShaderCodeAllocator()), useSafeMUL(useSafeMUL) {
+#else
 	ShaderEmitter(bool useSafeMUL) : Xbyak::CodeGenerator(allocSize), useSafeMUL(useSafeMUL) {
+#endif
 		cpuCaps = Xbyak::util::Cpu();
 
 		haveSSE4_1 = cpuCaps.has(Xbyak::util::Cpu::tSSE41);

@@ -12,6 +12,47 @@ using namespace Xbyak;
 using namespace Xbyak::util;
 using namespace Helpers;
 
+#ifdef __ORBIS__
+extern "C" void* orbis_exec_mem_alloc(size_t size);
+
+namespace {
+	class OrbisShaderCodeAllocator final : public Xbyak::Allocator {
+		// 256 shaders of ~388 KiB each. Direct memory is committed when allocated, so this is a real 97 MiB.
+		static constexpr size_t blockCount = 256;
+
+		uint8_t* arena = nullptr;
+		size_t blockSize = 0;
+		std::vector<uint8_t*> freeBlocks;
+
+	  public:
+		uint8_t* alloc(size_t size) override {
+			if (!arena) {
+				blockSize = size;
+				arena = static_cast<uint8_t*>(orbis_exec_mem_alloc(blockSize * blockCount));
+				if (!arena) return nullptr;
+				for (size_t i = blockCount; i-- > 0;) freeBlocks.push_back(arena + i * blockSize);
+			}
+			if (size > blockSize || freeBlocks.empty()) return nullptr;
+			uint8_t* p = freeBlocks.back();
+			freeBlocks.pop_back();
+			return p;
+		}
+
+		void free(uint8_t* p) override {
+			if (p) freeBlocks.push_back(p);
+		}
+
+		// The arena is already read-write-execute; Xbyak's mprotect would be refused.
+		bool useProtect() const override { return false; }
+	};
+}  // namespace
+
+Xbyak::Allocator* orbisShaderCodeAllocator() {
+	static OrbisShaderCodeAllocator allocator;
+	return &allocator;
+}
+#endif
+
 // The shader recompiler uses quite an odd internal ABI
 // We make use of the fact that in regular conditions, we should pretty much never be calling C++ code from recompiled shader code
 // This allows us to establish an ABI that's optimized for this sort of workflow, statically allocating volatile host registers
