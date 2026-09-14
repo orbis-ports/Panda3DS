@@ -227,6 +227,8 @@ class Memory {
 	Memory(KFcram& fcramManager, const EmulatorConfig& config);
 	void reset();
 	void* getReadPointer(u32 address);
+	// Page base pointers, one per 4 KiB page, null where the page is unmapped or needs a handler
+	uintptr_t* getReadTable() { return readTable.data(); }
 	void* getWritePointer(u32 address);
 	std::optional<u32> loadELF(std::ifstream& file);
 	std::optional<u32> load3DSX(const std::filesystem::path& path);

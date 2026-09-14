@@ -20,6 +20,17 @@ CPU::CPU(Memory& mem, Kernel& kernel, Emulator& emu) : mem(mem), emu(emu), sched
 		config.fastmem_pointer = u64(mem.getFastmemArenaBase());
 	} else {
 		config.fastmem_pointer = std::nullopt;
+
+		// Without fastmem every guest memory access was a callback into Memory::read/write, ~200k a frame in
+		// A Link Between Worlds on a PS4. Let the JIT walk the same page table inline instead; unmapped pages
+		// (MMIO, VRAM, config memory) are null and still reach the callbacks, as do accesses straddling a page.
+		// One table serves reads and writes, so a write to a read-only page is not caught - a guest doing that
+		// would fault on real hardware.
+		using PageTable = std::array<std::uint8_t*, Dynarmic::A32::UserConfig::NUM_PAGE_TABLE_ENTRIES>;
+		config.page_table = reinterpret_cast<PageTable*>(mem.getReadTable());
+		config.absolute_offset_page_table = false;
+		config.detect_misaligned_access_via_page_table = 8 | 16 | 32 | 64;
+		config.only_detect_misalignment_via_page_table_on_page_boundary = true;
 	}
 
 	jit = std::make_unique<Dynarmic::A32::Jit>(config);
