@@ -48,7 +48,7 @@
 	url = https://github.com/Panda3DS-emu/ext-boost
 [submodule "third_party/dynarmic"]
 	path = third_party/dynarmic
-	url = https://github.com/Panda3DS-emu/dynarmic
+	url = https://github.com/orbis-ports/dynarmic
 [submodule "third_party/nihstro"]
 	path = third_party/nihstro
 	url = https://github.com/neobrain/nihstro.git
@@ -63,7 +63,7 @@
 	url = https://github.com/Panda3DS-emu/metal-cpp
 [submodule "third_party/fmt"]
 	path = third_party/fmt
-	url = https://github.com/fmtlib/fmt
+	url = https://github.com/orbis-ports/fmt
 [submodule "third_party/fdk-aac"]
 	path = third_party/fdk-aac
 	url = https://github.com/Panda3DS-emu/fdk-aac/
@@ -72,8 +72,8 @@
 	url = https://github.com/panda3ds-emu/oaknut
 [submodule "third_party/SDL2"]
 	path = third_party/SDL2
-	url = https://github.com/libsdl-org/SDL
-	branch = SDL2
+	url = https://github.com/orbis-ports/SDL
+	branch = ps4-support
 [submodule "third_party/capstone"]
 	path = third_party/capstone
 	url = https://github.com/Panda3DS-emu/capstone
