@@ -114,7 +114,14 @@ namespace {
 	// Base class for implementations which require syncing.
 	class SyncingStreamBuffer : public OpenGLStreamBuffer {
 	  public:
+#ifdef __ORBIS__
+		// Every sync point is a glFenceSync plus a glClientWaitSync, and under Mesa's threaded context each one blocks
+		// until the driver thread has drained its queue. Measured in A Link Between Worlds on a PS4 (zink):
+		// 16 -> 37.7 ms a frame with 14.5 ms in glClientWaitSync; 4 -> 34 ms; 2 -> 33.2 ms; 1 -> 33.2 ms.
+		enum : u32 { NUM_SYNC_POINTS = 2 };
+#else
 		enum : u32 { NUM_SYNC_POINTS = 16 };
+#endif
 
 		virtual ~SyncingStreamBuffer() override {
 			for (u32 i = m_available_block_index; i <= m_used_block_index; i++) {
