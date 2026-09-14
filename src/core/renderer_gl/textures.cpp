@@ -1,6 +1,7 @@
 #include "renderer_gl/textures.hpp"
 #include "colour.hpp"
 #include <array>
+#include <vector>
 
 using namespace Helpers;
 
