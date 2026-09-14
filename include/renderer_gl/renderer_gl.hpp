@@ -87,6 +87,22 @@ class RendererGL final : public Renderer {
 
 	OpenGL::Texture screenTexture;
 	OpenGL::Texture LUTTexture;
+
+	// Games switch between lighting LUT sets draw after draw, and every upload into a texture the current batch uses
+	// forces a flush on some drivers (~1.7 ms each through zink on a PS4). Each set seen recently gets its own texture,
+	// found by hash, so switching back to one is a bind and not an upload.
+	struct LUTTextureEntry {
+		OpenGL::Texture texture;
+		u64 lastUse = 0;
+		bool fogValid = false;
+	};
+	static constexpr usize maxLUTTextures = 32;
+	std::unordered_map<u64, LUTTextureEntry> lutTextureCache;
+	LUTTextureEntry* currentLUTEntry = nullptr;
+	u64 lutTextureUseCounter = 0;
+	std::array<float, 128 * 2> fogLutRow{};
+	void uploadFogRow(OpenGL::Texture& texture);
+	void clearLUTTextureCache();
 	OpenGL::Framebuffer screenFramebuffer;
 	OpenGL::Texture blankTexture;
 	// The "default" vertex shader to use when using specialized shaders but not PICA vertex shader -> GLSL recompilation

@@ -124,6 +124,9 @@ void RendererGL::initGraphicsContextInternal() {
 
 	// 24 rows for light, 1 for fog
 	LUTTexture.create(256, Lights::LUT_Count + 1, GL_RG32F);
+	clearLUTTextureCache();
+	gpu.lightingLUTDirty = true;
+	gpu.fogLUTDirty = true;
 	LUTTexture.bind();
 	LUTTexture.setMinFilter(OpenGL::Linear);
 	LUTTexture.setMagFilter(OpenGL::Linear);
@@ -375,22 +378,69 @@ void RendererGL::bindTexturesToSlots() {
 	}
 
 	glActiveTexture(GL_TEXTURE0 + 3);
-	LUTTexture.bind();
+	if (currentLUTEntry) {
+		currentLUTEntry->texture.bind();
+	} else {
+		LUTTexture.bind();
+	}
 	glActiveTexture(GL_TEXTURE0);
+}
+
+void RendererGL::clearLUTTextureCache() {
+	for (auto& [hash, entry] : lutTextureCache) {
+		entry.texture.free();
+	}
+	lutTextureCache.clear();
+	currentLUTEntry = nullptr;
+}
+
+void RendererGL::uploadFogRow(OpenGL::Texture& texture) {
+	texture.bind();
+	// The fog LUT exists at the end of the lighting LUT
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, Lights::LUT_Count, 128, 1, GL_RG, GL_FLOAT, fogLutRow.data());
 }
 
 void RendererGL::updateLightingLUT() {
 	gpu.lightingLUTDirty = false;
-	std::array<float, GPU::LightingLutSize * 2> lightingLut;
+	const u64 hash = PICAHash::computeHash(reinterpret_cast<const char*>(gpu.lightingLUT.data()), gpu.lightingLUT.size() * sizeof(gpu.lightingLUT[0]));
+	glActiveTexture(GL_TEXTURE0 + 3);
 
-	for (int i = 0; i < lightingLut.size(); i += 2) {
-		uint64_t value = gpu.lightingLUT[i >> 1] & 0xFFF;
-		lightingLut[i] = (float)(value << 4) / 65535.0f;
+	auto it = lutTextureCache.find(hash);
+	if (it == lutTextureCache.end()) {
+		if (lutTextureCache.size() >= maxLUTTextures) {
+			auto oldest = lutTextureCache.begin();
+			for (auto i = lutTextureCache.begin(); i != lutTextureCache.end(); ++i) {
+				if (i->second.lastUse < oldest->second.lastUse) oldest = i;
+			}
+			if (&oldest->second == currentLUTEntry) currentLUTEntry = nullptr;
+			oldest->second.texture.free();
+			lutTextureCache.erase(oldest);
+		}
+
+		std::array<float, GPU::LightingLutSize * 2> lightingLut{};
+		for (int i = 0; i < lightingLut.size(); i += 2) {
+			uint64_t value = gpu.lightingLUT[i >> 1] & 0xFFF;
+			lightingLut[i] = (float)(value << 4) / 65535.0f;
+		}
+
+		// 24 rows for light, 1 for fog
+		LUTTextureEntry& entry = lutTextureCache[hash];
+		entry.texture.create(256, Lights::LUT_Count + 1, GL_RG32F);
+		entry.texture.bind();
+		entry.texture.setMinFilter(OpenGL::Linear);
+		entry.texture.setMagFilter(OpenGL::Linear);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, Lights::LUT_Count, GL_RG, GL_FLOAT, lightingLut.data());
+		it = lutTextureCache.find(hash);
 	}
 
-	glActiveTexture(GL_TEXTURE0 + 3);
-	LUTTexture.bind();
-	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, Lights::LUT_Count, GL_RG, GL_FLOAT, lightingLut.data());
+	currentLUTEntry = &it->second;
+	currentLUTEntry->lastUse = ++lutTextureUseCounter;
+	if (!currentLUTEntry->fogValid) {
+		uploadFogRow(currentLUTEntry->texture);
+		currentLUTEntry->fogValid = true;
+	}
+
+	currentLUTEntry->texture.bind();
 	glActiveTexture(GL_TEXTURE0);
 }
 
@@ -401,7 +451,7 @@ void RendererGL::updateFogLUT() {
 	// 0-12     fixed1.1.11, Difference from next element
 	// 13-23    fixed0.0.11, Value
 	// We will store them as a 128x1 RG texture with R being the value and G being the difference
-	std::array<float, 128 * 2> fogLut;
+	std::array<float, 128 * 2>& fogLut = fogLutRow;
 
 	for (int i = 0; i < fogLut.size(); i += 2) {
 		const uint32_t value = gpu.fogLUT[i >> 1];
@@ -415,9 +465,14 @@ void RendererGL::updateFogLUT() {
 	}
 
 	glActiveTexture(GL_TEXTURE0 + 3);
-	LUTTexture.bind();
-	// The fog LUT exists at the end of the lighting LUT
-	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, Lights::LUT_Count, 128, 1, GL_RG, GL_FLOAT, fogLut.data());
+	uploadFogRow(LUTTexture);
+	for (auto& [hash, entry] : lutTextureCache) {
+		entry.fogValid = false;
+	}
+	if (currentLUTEntry) {
+		uploadFogRow(currentLUTEntry->texture);
+		currentLUTEntry->fogValid = true;
+	}
 	glActiveTexture(GL_TEXTURE0);
 }
 
@@ -1174,6 +1229,9 @@ void RendererGL::deinitGraphicsContext() {
 	depthBufferCache.reset();
 	colourBufferCache.reset();
 	shaderCache.clear();
+	// The textures die with the context; forget them without calling into GL
+	lutTextureCache.clear();
+	currentLUTEntry = nullptr;
 
 	// All other GL objects should be invalidated automatically and be recreated by the next call to initGraphicsContext
 	// TODO: Make it so that depth and colour buffers get written back to 3DS memory
