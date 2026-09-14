@@ -179,6 +179,9 @@ class CPU {
 	}
 
     void addTicks(u64 ticks) { env.AddTicks(ticks); }
+    // End the JIT's current run at its next tick check, so the scheduler services pending events now.
+    // Dynarmic reloads GetTicksRemaining() after every SVC, so a zero here takes effect on return.
+    void endTimeslice() { env.ticksLeft = 0; }
 
     void clearCache() { jit->ClearCache(); }
     void clearCacheRange(u32 start, u32 size) { jit->InvalidateCacheRange(start, size); }

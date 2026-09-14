@@ -400,6 +400,11 @@ void Kernel::sleepThread(s64 ns) {
 					u64 idleCycles = timestamp - scheduler.currentTimestamp;
 					cpu.addTicks(idleCycles);
 				}
+
+				// Nothing can run until the scheduler services the event we just skipped to, and it only does that
+				// between JIT runs. ticksLeft still holds the deadline this run started with, so without this the
+				// idle loop spins for the rest of it: ~190k SleepThread calls a frame, measured on a PS4.
+				cpu.endTimeslice();
 			}
 		}
 	} else {  // If we're sleeping for >= 0 ns
