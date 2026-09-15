@@ -43,7 +43,9 @@ struct EmulatorConfig {
 
 	// For now, use specialized shaders by default on MacOS as M1 drivers are buggy when using the ubershader, and on Android since mobile GPUs are
 	// horrible. On other platforms we default to ubershader + shadergen fallback for lights
-#if defined(__ANDROID__) || defined(__APPLE__)
+	// On the PS4 the specialized shaders compile in the background while the ubershader draws (renderer_gl.cpp), so the
+	// ubershader is only the fallback there; as the default it put every frame on the slow path.
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(__ORBIS__)
 	static constexpr bool ubershaderDefault = false;
 #else
 	static constexpr bool ubershaderDefault = true;
