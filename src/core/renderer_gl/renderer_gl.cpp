@@ -946,15 +946,45 @@ std::optional<ColourBuffer> RendererGL::getColourBuffer(u32 addr, PICA::ColorFmt
 	return colourBufferCache.add(sampleBuffer);
 }
 
-OpenGL::Program& RendererGL::getSpecializedShader() {
-	constexpr uint vsUBOBlockBinding = 1;
-	constexpr uint fsUBOBlockBinding = 2;
-
+PICA::FragmentConfig RendererGL::getFragmentConfig() {
 	PICA::FragmentConfig fsConfig(regs);
 	// If we're not on GLES, ignore the logic op configuration and don't generate redundant shaders for it, since we use hw logic ops
 	if (!driverInfo.usingGLES) {
 		fsConfig.outConfig.logicOpMode = PICA::LogicOpMode(0);
 	}
+	return fsConfig;
+}
+
+OpenGL::Shader* RendererGL::getAcceleratedVertexShader(ShaderUnit& shaderUnit) {
+	PICA::VertConfig vertexConfig(shaderUnit.vs, regs, false);
+
+	std::optional<OpenGL::Shader>& shader = shaderCache.vertexShaderCache[vertexConfig];
+	// If the optional is false, we have never tried to recompile the shader before. Try to recompile it and see if it works.
+	if (!shader.has_value()) {
+		// Initialize shader to a "null" shader (handle == 0)
+		shader = OpenGL::Shader();
+
+		std::string picaShaderSource = PICA::ShaderGen::decompileShader(
+			shaderUnit.vs, *emulatorConfig, shaderUnit.vs.entrypoint,
+			driverInfo.usingGLES ? PICA::ShaderGen::API::GLES : PICA::ShaderGen::API::GL, PICA::ShaderGen::Language::GLSL
+		);
+
+		// Empty source means compilation error, if the source is not empty then we convert the recompiled PICA code into a valid shader and
+		// upload it to the GPU
+		if (!picaShaderSource.empty()) {
+			std::string vertexShaderSource = fragShaderGen.getVertexShaderAccelerated(picaShaderSource, vertexConfig, false);
+			shader->create({vertexShaderSource}, OpenGL::Vertex);
+		}
+	}
+
+	return shader->exists() ? &(*shader) : nullptr;
+}
+
+RendererGL::CachedProgram& RendererGL::getSpecializedProgram(
+	OpenGL::Shader& vertexShader, const PICA::FragmentConfig& fsConfig, bool acceleratedVertexShader
+) {
+	constexpr uint vsUBOBlockBinding = 1;
+	constexpr uint fsUBOBlockBinding = 2;
 
 	OpenGL::Shader& fragShader = shaderCache.fragmentShaderCache[fsConfig];
 	if (!fragShader.exists()) {
@@ -962,9 +992,7 @@ OpenGL::Program& RendererGL::getSpecializedShader() {
 		fragShader.create({fs.c_str(), fs.size()}, OpenGL::Fragment);
 	}
 
-	// Get the handle of the current vertex shader
-	OpenGL::Shader& vertexShader = usingAcceleratedShader ? *generatedVertexShader : defaultShadergenVs;
-	// And form the key for looking up a shader program
+	// Form the key for looking up a shader program
 	const u64 programKey = (u64(vertexShader.handle()) << 32) | u64(fragShader.handle());
 
 	CachedProgram& programEntry = shaderCache.programCache[programKey];
@@ -985,11 +1013,22 @@ OpenGL::Program& RendererGL::getSpecializedShader() {
 		uint fsUBOIndex = glGetUniformBlockIndex(program.handle(), "FragmentUniforms");
 		glUniformBlockBinding(program.handle(), fsUBOIndex, fsUBOBlockBinding);
 
-		if (usingAcceleratedShader) {
+		if (acceleratedVertexShader) {
 			uint vertexUBOIndex = glGetUniformBlockIndex(program.handle(), "PICAShaderUniforms");
 			glUniformBlockBinding(program.handle(), vertexUBOIndex, vsUBOBlockBinding);
 		}
 	}
+
+	return programEntry;
+}
+
+OpenGL::Program& RendererGL::getSpecializedShader() {
+	constexpr uint vsUBOBlockBinding = 1;
+	constexpr uint fsUBOBlockBinding = 2;
+
+	PICA::FragmentConfig fsConfig = getFragmentConfig();
+	OpenGL::Shader& vertexShader = usingAcceleratedShader ? *generatedVertexShader : defaultShadergenVs;
+	OpenGL::Program& program = getSpecializedProgram(vertexShader, fsConfig, usingAcceleratedShader).program;
 
 	// Upload uniform data to our shader's UBO
 	PICA::FragmentUniforms uniforms;
@@ -1112,37 +1151,38 @@ bool RendererGL::prepareForDraw(ShaderUnit& shaderUnit, PICA::DrawAcceleration* 
 		}
 	}
 
+#ifdef __ORBIS__
+	// ⚠ ASYNCHRONOUS SHADERS. Compiling a new specialized program costs 50-150 ms of RADV/ACO work on the PS4's CPU,
+	// and the first draw that uses it waits for all of it - that is the stutter entering a new area. Build the
+	// program here without using it, ask the driver whether its background compile is done, and draw this one with
+	// the ubershader (always compiled at startup) until it is.
+	if (!usingUbershader) {
+		const bool canAccelerate = emulatorConfig->accelerateShaders && accel != nullptr && accel->canBeAccelerated;
+		OpenGL::Shader* vertexShader = canAccelerate ? getAcceleratedVertexShader(shaderUnit) : nullptr;
+		CachedProgram& candidate = getSpecializedProgram(vertexShader ? *vertexShader : defaultShadergenVs, getFragmentConfig(), vertexShader != nullptr);
+		if (!candidate.ready) {
+			GLint done = GL_TRUE;
+			glGetProgramiv(candidate.program.handle(), 0x91B1 /* GL_COMPLETION_STATUS_KHR */, &done);
+			candidate.ready = done != GL_FALSE;
+		}
+		if (!candidate.ready) {
+			usingUbershader = true;
+		}
+	}
+#endif
+
 	// Then we figure out if we will use hw accelerated shaders, and try to fetch our shader
 	// TODO: Ubershader support for accelerated shaders
 	usingAcceleratedShader = emulatorConfig->accelerateShaders && !usingUbershader && accel != nullptr && accel->canBeAccelerated;
 
 	if (usingAcceleratedShader) {
-		PICA::VertConfig vertexConfig(shaderUnit.vs, regs, usingUbershader);
-
-		std::optional<OpenGL::Shader>& shader = shaderCache.vertexShaderCache[vertexConfig];
-		// If the optional is false, we have never tried to recompile the shader before. Try to recompile it and see if it works.
-		if (!shader.has_value()) {
-			// Initialize shader to a "null" shader (handle == 0)
-			shader = OpenGL::Shader();
-
-			std::string picaShaderSource = PICA::ShaderGen::decompileShader(
-				shaderUnit.vs, *emulatorConfig, shaderUnit.vs.entrypoint,
-				driverInfo.usingGLES ? PICA::ShaderGen::API::GLES : PICA::ShaderGen::API::GL, PICA::ShaderGen::Language::GLSL
-			);
-
-			// Empty source means compilation error, if the source is not empty then we convert the recompiled PICA code into a valid shader and
-			// upload it to the GPU
-			if (!picaShaderSource.empty()) {
-				std::string vertexShaderSource = fragShaderGen.getVertexShaderAccelerated(picaShaderSource, vertexConfig, usingUbershader);
-				shader->create({vertexShaderSource}, OpenGL::Vertex);
-			}
-		}
+		OpenGL::Shader* shader = getAcceleratedVertexShader(shaderUnit);
 
 		// Shader generation did not work out, so set usingAcceleratedShader to false
-		if (!shader->exists()) {
+		if (shader == nullptr) {
 			usingAcceleratedShader = false;
 		} else {
-			generatedVertexShader = &(*shader);
+			generatedVertexShader = shader;
 			hwShaderUniformUBO->Bind();
 
 			// Upload shader uniforms to our UBO

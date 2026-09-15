@@ -126,6 +126,9 @@ class RendererGL final : public Renderer {
 	// Cached recompiled fragment shader
 	struct CachedProgram {
 		OpenGL::Program program;
+		// Whether the driver has finished compiling it in the background (GL_COMPLETION_STATUS_KHR). Only used when
+		// shaders are compiled asynchronously; until then, draws that would use it take the ubershader instead.
+		bool ready = false;
 	};
 
 	struct ShaderCache {
@@ -162,6 +165,10 @@ class RendererGL final : public Renderer {
 	OpenGL::Framebuffer getColourFBO();
 	OpenGL::Texture getTexture(Texture& tex);
 	OpenGL::Program& getSpecializedShader();
+	// The parts of getSpecializedShader and prepareForDraw that build and cache shaders, without per-draw state
+	PICA::FragmentConfig getFragmentConfig();
+	OpenGL::Shader* getAcceleratedVertexShader(ShaderUnit& shaderUnit);
+	CachedProgram& getSpecializedProgram(OpenGL::Shader& vertexShader, const PICA::FragmentConfig& fsConfig, bool acceleratedVertexShader);
 
 	PICA::ShaderGen::FragmentGenerator fragShaderGen;
 	OpenGL::Driver driverInfo;
