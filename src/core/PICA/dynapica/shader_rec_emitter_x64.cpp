@@ -14,6 +14,7 @@ using namespace Helpers;
 
 #ifdef __ORBIS__
 extern "C" void* orbis_exec_mem_alloc(size_t size);
+extern "C" void orbis_exec_mem_free(void* addr, size_t size);
 
 namespace {
 	class OrbisShaderCodeAllocator final : public Xbyak::Allocator {
@@ -38,8 +39,22 @@ namespace {
 			return p;
 		}
 
+		// Give the arena back once every shader has been freed, which happens when the Emulator is destroyed. This object
+		// is static and the core module is unloaded between content loads, so an arena kept here was 97 MiB of direct
+		// memory lost per game started - and the next core to load (melonDS DS) died in std::bad_alloc.
 		void free(uint8_t* p) override {
-			if (p) freeBlocks.push_back(p);
+			if (!p) return;
+			freeBlocks.push_back(p);
+			if (freeBlocks.size() == blockCount) release();
+		}
+
+		~OrbisShaderCodeAllocator() { release(); }
+
+		void release() {
+			if (!arena) return;
+			orbis_exec_mem_free(arena, blockSize * blockCount);
+			arena = nullptr;
+			freeBlocks.clear();
 		}
 
 		// The arena is already read-write-execute; Xbyak's mprotect would be refused.
