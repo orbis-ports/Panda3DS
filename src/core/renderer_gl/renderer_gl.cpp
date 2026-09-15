@@ -1312,12 +1312,29 @@ void RendererGL::accelerateVertexUpload(ShaderUnit& shaderUnit, PICA::DrawAccele
 	// Update index buffer if necessary
 	if (accel->indexed) {
 		usingShortIndices = accel->useShortIndices;
+#ifdef __ORBIS__
+		// The PS4's GPU (AMD GFX7) has no 8-bit index buffers, so Mesa rewrites every GL_UNSIGNED_BYTE draw on the CPU by
+		// reading the index buffer back - and that read flushes the driver's batch. ~79 flushes a frame in A Link Between
+		// Worlds. Widening here costs a loop over a few hundred indices instead.
+		const bool widenIndices = !usingShortIndices;
+		usingShortIndices = true;
+#endif
 		const usize indexBufferSize = regs[PICA::InternalRegs::VertexCountReg] * (usingShortIndices ? sizeof(u16) : sizeof(u8));
 
 		hwIndexBuffer->Bind();
 		auto indexBufferRes = hwIndexBuffer->Map(4, indexBufferSize);
 		hwIndexBufferOffset = reinterpret_cast<void*>(usize(indexBufferRes.buffer_offset));
 
+#ifdef __ORBIS__
+		if (widenIndices) {
+			const u8* src = static_cast<const u8*>(accel->indexBuffer);
+			u16* dst = static_cast<u16*>(indexBufferRes.pointer);
+			const u32 indexCount = regs[PICA::InternalRegs::VertexCountReg];
+			for (u32 i = 0; i < indexCount; i++) {
+				dst[i] = src[i];
+			}
+		} else
+#endif
 		std::memcpy(indexBufferRes.pointer, accel->indexBuffer, indexBufferSize);
 		// If we don't have glDrawRangeElementsBaseVertex, we must subtract the base index value from our index buffer manually
 		if (glDrawRangeElementsBaseVertex == nullptr) [[unlikely]] {
