@@ -225,6 +225,11 @@ class Memory {
 	u16 kernelVersion = 0;
 
 	Memory(KFcram& fcramManager, const EmulatorConfig& config);
+	// The arena holds the whole emulated FCRAM (128 MiB without fastmem). It was never freed, so every core reload
+	// leaked it, and on a PS4 the next game then could not fit dynarmic's code block.
+	~Memory() { delete arena; }
+	Memory(const Memory&) = delete;
+	Memory& operator=(const Memory&) = delete;
 	void reset();
 	void* getReadPointer(u32 address);
 	// Page base pointers, one per 4 KiB page, null where the page is unmapped or needs a handler
