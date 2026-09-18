@@ -72,8 +72,8 @@
 	url = https://github.com/panda3ds-emu/oaknut
 [submodule "third_party/SDL2"]
 	path = third_party/SDL2
-	url = https://github.com/orbis-ports/SDL
-	branch = ps4-support
+	url = https://github.com/orbis-ports/SDL2
+	branch = orbis-2.32
 [submodule "third_party/capstone"]
 	path = third_party/capstone
 	url = https://github.com/Panda3DS-emu/capstone
